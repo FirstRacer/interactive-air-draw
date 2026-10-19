@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Air Draw — Write With Your Finger</title>
+<style>
+  :root{
+    --bg: #0b0d10;
+    --panel: rgba(20, 23, 28, 0.72);
+    --panel-border: rgba(255,255,255,0.08);
+    --accent: #5eead4;
+    --accent-2: #f472b6;
+    --text: #e7e9ec;
+    --text-dim: #9aa1a9;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+  }
+  #canvasWrap {
+    position: relative;
+    width: min(96vw, 960px);
+    aspect-ratio: 4 / 3;
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px var(--panel-border), 0 30px 80px rgba(0,0,0,0.55);
+    background: #000;
+  }
+  canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  #videoCanvas { z-index: 1; filter: saturate(1.05) contrast(1.02); }
+  #inkCanvas   { z-index: 2; }
+  #cursorCanvas{ z-index: 3; }
+
+  video { display: none; }
+
+  #status {
+    position: absolute;
+    top: 14px; left: 14px;
+    z-index: 5;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(10px);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: color 0.15s ease;
+  }
+  #status .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-dim);
+    box-shadow: 0 0 0 0 transparent;
+    transition: all 0.15s ease;
+  }
+  #status.draw .dot { background: var(--accent); box-shadow: 0 0 10px 2px var(--accent); }
+  #status.hover .dot { background: var(--accent-2); box-shadow: 0 0 10px 2px var(--accent-2); }
+
+  #loading, #errorBox {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(5,6,8,0.92);
+    text-align: center;
+    padding: 30px;
+  }
+  #errorBox { display: none; }
+  .spinner {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading p, #errorBox p { color: var(--text-dim); font-size: 14px; max-width: 380px; line-height: 1.5; }
+  #errorBox h3 { margin: 0; font-size: 17px; }
+
+  #panel {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+    border-radius: 18px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px);
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 92%;
+  }
+  .ctrl { display: flex; align-items: center; gap: 6px; }
+  .ctrl label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  input[type=color] {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    border: 2px solid var(--panel-border);
+    padding: 0;
+    background: none;
+    cursor: pointer;
+  }
+  input[type=range] { width: 90px; accent-color: var(--accent); }
+
+  .swatches { display: flex; gap: 6px; }
+  .swatch {
+    width: 20px; height: 20px; border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid rgba(255,255,255,0.25);
+    transition: transform 0.1s ease;
+  }
+  .swatch:hover { transform: scale(1.15); }
+  .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+
+  button {
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  button:hover { background: rgba(255,255,255,0.14); }
+  button.primary { background: var(--accent); color: #06201c; border-color: var(--accent); }
+  button.primary:hover { background: #7ff2df; }
+
+  #help {
+    position: absolute;
+    top: 14px; right: 14px;
+    z-index: 5;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(10px);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    max-width: 210px;
+  }
+  #help b { color: var(--text); }
+
+  @media (max-width: 640px) {
+    #help { display: none; }
+    #panel { gap: 8px; padding: 8px 10px; }
+    input[type=range] { width: 60px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="canvasWrap">
+    <canvas id="videoCanvas" width="640" height="480"></canvas>
+    <canvas id="inkCanvas" width="640" height="480"></canvas>
+    <canvas id="cursorCanvas" width="640" height="480"></canvas>
+    <video id="video" playsinline autoplay muted></video>
+
+    <div id="status" class="idle"><span class="dot"></span><span id="statusText">Starting camera…</span></div>
+
+    <div id="help">
+      <b>☝️ Point</b> (index only) → draw<br/>
+      <b>✌️ Two fingers</b> → move without drawing<br/>
+      <b>✊ Fist</b> → pen up
+    </div>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <p id="loadingText">Loading hand-tracking model and requesting camera access…</p>
+    </div>
+
+    <div id="errorBox">
+      <h3>⚠️ Couldn't start</h3>
+      <p id="errorText"></p>
+    </div>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="ctrl swatches">
+    <div class="swatch active" style="background:#5eead4" data-color="#5eead4"></div>
+    <div class="swatch" style="background:#f472b6" data-color="#f472b6"></div>
+    <div class="swatch" style="background:#facc15" data-color="#facc15"></div>
+    <div class="swatch" style="background:#60a5fa" data-color="#60a5fa"></div>
+    <div class="swatch" style="background:#ffffff" data-color="#ffffff"></div>
+  </div>
+  <div class="ctrl">
+    <label>Color</label>
+    <input type="color" id="colorPicker" value="#5eead4" />
+  </div>
+  <div class="ctrl">
+    <label>Size</label>
+    <input type="range" id="sizeSlider" min="2" max="28" value="7" />
+  </div>
+  <button id="clearBtn">Clear</button>
+  <button id="saveBtn" class="primary">Save PNG</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+(function(){
+  const videoEl = document.getElementById('video');
+  const videoCanvas = document.getElementById('videoCanvas');
+  const inkCanvas = document.getElementById('inkCanvas');
+  const cursorCanvas = document.getElementById('cursorCanvas');
+  const vCtx = videoCanvas.getContext('2d');
+  const iCtx = inkCanvas.getContext('2d');
+  const cCtx = cursorCanvas.getContext('2d');
+
+  const W = videoCanvas.width, H = videoCanvas.height;
+  iCtx.lineCap = 'round';
+  iCtx.lineJoin = 'round';
+
+  const statusEl = document.getElementById('status');
+  const statusText = document.getElementById('statusText');
+  const loadingEl = document.getElementById('loading');
+  const loadingText = document.getElementById('loadingText');
+  const errorBox = document.getElementById('errorBox');
+  const errorText = document.getElementById('errorText');
+
+  const colorPicker = document.getElementById('colorPicker');
+  const sizeSlider = document.getElementById('sizeSlider');
+  const clearBtn = document.getElementById('clearBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const swatches = document.querySelectorAll('.swatch');
+
+  let currentColor = colorPicker.value;
+  let currentSize = parseInt(sizeSlider.value, 10);
+
+  colorPicker.addEventListener('input', () => {
+    currentColor = colorPicker.value;
+    swatches.forEach(s => s.classList.remove('active'));
+  });
+  sizeSlider.addEventListener('input', () => { currentSize = parseInt(sizeSlider.value, 10); });
+  swatches.forEach(s => {
+    s.addEventListener('click', () => {
+      currentColor = s.dataset.color;
+      colorPicker.value = currentColor;
+      swatches.forEach(x => x.classList.remove('active'));
+      s.classList.add('active');
+    });
+  });
+  clearBtn.addEventListener('click', () => { iCtx.clearRect(0, 0, W, H); });
+  saveBtn.addEventListener('click', () => {
+    const out = document.createElement('canvas');
+    out.width = W; out.height = H;
+    const octx = out.getContext('2d');
+    octx.drawImage(videoCanvas, 0, 0);
+    octx.drawImage(inkCanvas, 0, 0);
+    const a = document.createElement('a');
+    a.download = 'air-draw.png';
+    a.href = out.toDataURL('image/png');
+    a.click();
+  });
+
+  function showError(msg) {
+    loadingEl.style.display = 'none';
+    errorBox.style.display = 'flex';
+    errorText.textContent = msg;
+  }
+
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function fingerExtended(tip, pip, wrist) { return dist(tip, wrist) > dist(pip, wrist) * 1.08; }
+
+  let lastPoint = null;
+  let smoothed = null;
+  const SMOOTH = 0.5;
+
+  function setStatus(mode) {
+    statusEl.classList.remove('draw', 'hover', 'idle');
+    statusEl.classList.add(mode);
+    if (mode === 'draw') statusText.textContent = 'Drawing';
+    else if (mode === 'hover') statusText.textContent = 'Moving (pen up)';
+    else statusText.textContent = 'No hand / pen up';
+  }
+
+  function onResults(results) {
+    // draw mirrored camera frame
+    vCtx.save();
+    vCtx.clearRect(0, 0, W, H);
+    vCtx.translate(W, 0);
+    vCtx.scale(-1, 1);
+    vCtx.drawImage(results.image, 0, 0, W, H);
+    vCtx.restore();
+
+    cCtx.clearRect(0, 0, W, H);
+
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+      setStatus('idle');
+      lastPoint = null;
+      smoothed = null;
+      return;
+    }
+
+    const lm = results.multiHandLandmarks[0];
+    const wrist = lm[0];
+    const indexExt = fingerExtended(lm[8], lm[6], wrist);
+    const middleExt = fingerExtended(lm[12], lm[10], wrist);
+    const ringExt = fingerExtended(lm[16], lm[14], wrist);
+    const pinkyExt = fingerExtended(lm[20], lm[18], wrist);
+
+    const tip = lm[8];
+    const rawX = (1 - tip.x) * W; // mirror x to match mirrored video
+    const rawY = tip.y * H;
+
+    if (!smoothed) smoothed = { x: rawX, y: rawY };
+    smoothed.x += (rawX - smoothed.x) * SMOOTH;
+    smoothed.y += (rawY - smoothed.y) * SMOOTH;
+
+    let mode = 'idle';
+    if (indexExt && !middleExt && !ringExt && !pinkyExt) mode = 'draw';
+    else if (indexExt && middleExt) mode = 'hover';
+
+    setStatus(mode);
+
+    // cursor
+    cCtx.beginPath();
+    cCtx.arc(smoothed.x, smoothed.y, currentSize / 2 + 4, 0, Math.PI * 2);
+    if (mode === 'draw') {
+      cCtx.fillStyle = currentColor;
+      cCtx.globalAlpha = 0.9;
+      cCtx.fill();
+    } else {
+      cCtx.strokeStyle = mode === 'hover' ? '#f472b6' : 'rgba(255,255,255,0.5)';
+      cCtx.lineWidth = 2;
+      cCtx.globalAlpha = 0.9;
+      cCtx.stroke();
+    }
+    cCtx.globalAlpha = 1;
+
+    if (mode === 'draw') {
+      if (lastPoint) {
+        iCtx.strokeStyle = currentColor;
+        iCtx.lineWidth = currentSize;
+        iCtx.beginPath();
+        iCtx.moveTo(lastPoint.x, lastPoint.y);
+        iCtx.lineTo(smoothed.x, smoothed.y);
+        iCtx.stroke();
+      }
+      lastPoint = { x: smoothed.x, y: smoothed.y };
+    } else {
+      lastPoint = null;
+    }
+  }
+
+  async function start() {
+    try {
+      if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+        showError('The hand-tracking library failed to load from the CDN. Check your network / ad-blocker and reload.');
+        return;
+      }
+
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.6
+      });
+      hands.onResults(onResults);
+
+      loadingText.textContent = 'Requesting camera access…';
+
+      const camera = new Camera(videoEl, {
+        onFrame: async () => { await hands.send({ image: videoEl }); },
+        width: W,
+        height: H
+      });
+
+      await camera.start();
+      loadingEl.style.display = 'none';
+    } catch (err) {
+      console.error(err);
+      let msg = 'Something went wrong starting the camera or model.';
+      if (err && err.name === 'NotAllowedError') msg = 'Camera permission was denied. Allow camera access and reload the page.';
+      else if (err && err.name === 'NotFoundError') msg = 'No camera was found on this device.';
+      showError(msg + (err && err.message ? ' (' + err.message + ')' : ''));
+    }
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
